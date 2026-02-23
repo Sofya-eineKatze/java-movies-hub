@@ -6,7 +6,6 @@ import ru.practicum.moviehub.model.Movie;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Year;
 import java.util.ArrayList;
