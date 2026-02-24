@@ -4,8 +4,8 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 import ru.practicum.moviehub.api.ErrorResponse;
 
 import java.io.IOException;
@@ -46,15 +46,12 @@ public abstract class BaseHttpHandler implements HttpHandler {
         sendError(ex, status, error, List.of());
     }
 
-    // Метод для проверки валидности JSON
+    // Строгая проверка JSON через JsonParser
     protected boolean isValidJson(String json) {
-        if (json == null || json.trim().isEmpty()) {
-            return false;
-        }
         try {
             JsonParser.parseString(json);
             return true;
-        } catch (JsonParseException e) {
+        } catch (JsonSyntaxException e) {
             return false;
         }
     }
