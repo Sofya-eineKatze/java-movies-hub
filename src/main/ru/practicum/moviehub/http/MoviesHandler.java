@@ -1,9 +1,6 @@
 package ru.practicum.moviehub.http;
 
 import com.sun.net.httpserver.HttpExchange;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import ru.practicum.moviehub.store.MoviesStore;
 import ru.practicum.moviehub.model.Movie;
 
