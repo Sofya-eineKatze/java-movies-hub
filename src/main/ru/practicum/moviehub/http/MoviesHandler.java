@@ -1,6 +1,10 @@
 package ru.practicum.moviehub.http;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 import ru.practicum.moviehub.store.MoviesStore;
 import ru.practicum.moviehub.model.Movie;
 
@@ -9,7 +13,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Year;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 
 public class MoviesHandler extends BaseHttpHandler {
@@ -37,16 +40,15 @@ public class MoviesHandler extends BaseHttpHandler {
             } else if (method.equalsIgnoreCase("DELETE") && path.startsWith("/movies/")) {
                 handleDelete(ex, path);
             } else {
-                ex.sendResponseHeaders(405, -1);
+                sendError(ex, 405, "Method Not Allowed");
             }
         } catch (Exception e) {
-            e.printStackTrace();
-            ex.sendResponseHeaders(500, -1);
+            sendError(ex, 500, "Внутренняя ошибка сервера");
         }
     }
 
     private void handleGetAll(HttpExchange ex) throws IOException {
-        Collection<Movie> movies = store.getAllMovies();
+        List<Movie> movies = store.getAllMovies();
         sendJson(ex, 200, movies);
     }
 
@@ -90,14 +92,18 @@ public class MoviesHandler extends BaseHttpHandler {
                         try {
                             sendJson(ex, 200, movie);
                         } catch (IOException e) {
-                            e.printStackTrace();
+                            try {
+                                sendError(ex, 500, "Внутренняя ошибка сервера");
+                            } catch (IOException ex2) {
+                                // ignore
+                            }
                         }
                     },
                     () -> {
                         try {
                             sendError(ex, 404, "Фильм не найден");
                         } catch (IOException e) {
-                            e.printStackTrace();
+                            // ignore
                         }
                     }
             );
@@ -109,86 +115,79 @@ public class MoviesHandler extends BaseHttpHandler {
     private void handlePost(HttpExchange ex) throws IOException {
         String contentType = ex.getRequestHeaders().getFirst("Content-Type");
         if (contentType == null || !contentType.startsWith("application/json")) {
-            ex.sendResponseHeaders(415, -1);
+            sendError(ex, 415, "Unsupported Media Type");
             return;
         }
 
-        InputStream is = ex.getRequestBody();
-        String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        try (InputStream is = ex.getRequestBody()) {
+            String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
 
-        // Строгая проверка JSON
-        if (!isStrictValidJson(body)) {
-            sendError(ex, 400, "Некорректный JSON");
-            return;
-        }
+            // ПРОВЕРКА 1: Должны быть двойные кавычки у ключей
+            if (!body.contains("\"title\"") || !body.contains("\"year\"")) {
+                sendError(ex, 400, "Некорректный JSON: ключи должны быть в двойных кавычках");
+                return;
+            }
 
-        try {
-            Movie newMovie = gson.fromJson(body, Movie.class);
+            // ПРОВЕРКА 2: Должны быть двоеточия после ключей
+            int titlePos = body.indexOf("\"title\"");
+            int yearPos = body.indexOf("\"year\"");
 
+            if (titlePos == -1 || yearPos == -1) {
+                sendError(ex, 400, "Некорректный JSON");
+                return;
+            }
+
+            // Проверяем, что после "title" есть двоеточие
+            String afterTitle = body.substring(titlePos + 7);
+            if (!afterTitle.trim().startsWith(":")) {
+                sendError(ex, 400, "Некорректный JSON");
+                return;
+            }
+
+            // Проверяем, что после "year" есть двоеточие
+            String afterYear = body.substring(yearPos + 6);
+            if (!afterYear.trim().startsWith(":")) {
+                sendError(ex, 400, "Некорректный JSON");
+                return;
+            }
+
+            // ПРОВЕРКА 3: Пробуем распарсить через JsonParser
+            try {
+                JsonParser.parseString(body);
+            } catch (JsonParseException e) {
+                sendError(ex, 400, "Некорректный JSON");
+                return;
+            }
+
+            // Парсим в объект Movie
+            Movie newMovie;
+            try {
+                newMovie = gson.fromJson(body, Movie.class);
+            } catch (Exception e) {
+                sendError(ex, 400, "Некорректный JSON");
+                return;
+            }
+
+            // Проверяем, что объект не null
             if (newMovie == null) {
                 sendError(ex, 400, "Некорректный JSON");
                 return;
             }
 
+            // Валидация полей
             List<String> errors = validateMovie(newMovie);
-
             if (!errors.isEmpty()) {
                 sendError(ex, 422, "Ошибка валидации", errors);
                 return;
             }
 
+            // Сохраняем фильм
             Movie createdMovie = store.addMovie(newMovie);
             sendJson(ex, 201, createdMovie);
-        } catch (Exception e) {
-            sendError(ex, 400, "Некорректный JSON");
+
+        } catch (IOException e) {
+            sendError(ex, 500, "Ошибка чтения запроса");
         }
-    }
-
-    private boolean isStrictValidJson(String json) {
-        if (json == null || json.trim().isEmpty()) {
-            return false;
-        }
-
-        String trimmed = json.trim();
-
-        // Проверяем, что это объект в фигурных скобках
-        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-            return false;
-        }
-
-        // Проверяем наличие двоеточий (ключ: значение)
-        if (!trimmed.contains(":")) {
-            return false;
-        }
-
-        // Проверяем, что ключи в двойных кавычках
-        // Ищем что-то типа "title": или "year":
-        if (!trimmed.contains("\"title\"") || !trimmed.contains("\"year\"")) {
-            return false;
-        }
-
-        // Проверяем формат { "title": "Inception", "year": 2010 }
-        // Должны быть кавычки вокруг title и year
-        int titlePos = trimmed.indexOf("\"title\"");
-        int yearPos = trimmed.indexOf("\"year\"");
-
-        if (titlePos == -1 || yearPos == -1) {
-            return false;
-        }
-
-        // Проверяем, что после title идет двоеточие
-        int colonAfterTitle = trimmed.indexOf(":", titlePos + 7);
-        if (colonAfterTitle == -1) {
-            return false;
-        }
-
-        // Проверяем, что после year идет двоеточие
-        int colonAfterYear = trimmed.indexOf(":", yearPos + 6);
-        if (colonAfterYear == -1) {
-            return false;
-        }
-
-        return true;
     }
 
     private void handleDelete(HttpExchange ex, String path) throws IOException {
@@ -219,17 +218,22 @@ public class MoviesHandler extends BaseHttpHandler {
             errors.add("Тело запроса не может быть пустым");
             return errors;
         }
+
+        // Проверка title
         if (movie.getTitle() == null || movie.getTitle().trim().isEmpty()) {
             errors.add("название не должно быть пустым");
         } else if (movie.getTitle().length() > 100) {
             errors.add("название должно быть не длиннее 100 символов");
         }
+
+        // Проверка year
         int currentYear = Year.now().getValue();
         if (movie.getYear() == null) {
             errors.add("год должен быть указан");
         } else if (movie.getYear() < 1888 || movie.getYear() > currentYear + 1) {
             errors.add(String.format("год должен быть между 1888 и %d", currentYear + 1));
         }
+
         return errors;
     }
 }

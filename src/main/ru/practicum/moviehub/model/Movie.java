@@ -1,10 +1,8 @@
 package ru.practicum.moviehub.model;
 
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class Movie {
-    private static final AtomicLong idGenerator = new AtomicLong(1);
     private Long id;
     private String title;
     private Integer year;
@@ -45,10 +43,6 @@ public class Movie {
 
     public void setYear(Integer year) {
         this.year = year;
-    }
-
-    public static Long generateId() {
-        return idGenerator.getAndIncrement();
     }
 
     @Override
